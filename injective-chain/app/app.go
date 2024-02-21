@@ -1,12 +1,9 @@
 package app
 
 import (
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-
+	"context"
 	"cosmossdk.io/errors"
+	"fmt"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
 	govv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
@@ -15,6 +12,10 @@ import (
 	ibcclienttypes "github.com/cosmos/ibc-go/v7/modules/core/02-client/types"
 	ibctm "github.com/cosmos/ibc-go/v7/modules/light-clients/07-tendermint"
 	"github.com/ethereum/go-ethereum/common"
+	"io"
+	"os"
+	"os/signal"
+	"path/filepath"
 
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
 	reflectionv1 "cosmossdk.io/api/cosmos/reflection/v1"
@@ -162,6 +163,9 @@ import (
 	wasmxtypes "github.com/InjectiveLabs/injective-core/injective-chain/modules/wasmx/types"
 
 	chaintypes "github.com/InjectiveLabs/injective-core/injective-chain/types"
+
+	publisherOptions "github.com/syntropynet/data-layer-sdk/pkg/options"
+	publisher "github.com/syntropynet/data-layer-sdk/pkg/service"
 )
 
 func init() {
@@ -272,9 +276,12 @@ var _ runtime.AppI = (*InjectiveApp)(nil)
 // InjectiveApp implements an extended ABCI application.
 type InjectiveApp struct {
 	*baseapp.BaseApp
+	publisher         *publisher.Service
 	legacyAmino       *codec.LegacyAmino
 	appCodec          codec.Codec
 	interfaceRegistry types.InterfaceRegistry
+
+	encfg EncodingConfig
 
 	invCheckPeriod uint
 
@@ -343,6 +350,7 @@ type InjectiveApp struct {
 	// stream server
 	ChainStreamServer *stream.StreamServer
 	EventPublisher    *stream.Publisher
+	Subscriber        *stream.StreamServer
 }
 
 // NewInjectiveApp returns a reference to a new initialized Injective application.
@@ -358,7 +366,6 @@ func NewInjectiveApp(
 	appOpts servertypes.AppOptions,
 	baseAppOptions ...func(*baseapp.BaseApp),
 ) *InjectiveApp {
-
 	appCodec := encodingConfig.Marshaler
 	legacyAmino := encodingConfig.Amino
 	interfaceRegistry := encodingConfig.InterfaceRegistry
@@ -375,6 +382,18 @@ func NewInjectiveApp(
 	bApp.SetVersion(version.Version)
 	bApp.SetName(version.Name)
 	bApp.SetInterfaceRegistry(interfaceRegistry)
+
+	natsConnection, _ := publisherOptions.MakeNats("Injective Publisher", os.Getenv("NATS_URL"), "", os.Getenv("NATS_NKEY"), os.Getenv("NATS_JWT"), "", "", "")
+	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
+
+	options := []publisherOptions.Option{
+		publisher.WithContext(ctx),
+		publisher.WithName(os.Getenv("PUB_NAME")),
+		publisher.WithPrefix(os.Getenv("PUB_PREFIX")),
+		publisher.WithNats(natsConnection),
+		publisher.WithNKeySeed(os.Getenv("NATS_NKEY")),
+		publisher.WithVerbose(false),
+	}
 
 	keys := sdk.NewKVStoreKeys(
 		// SDK keys
@@ -402,8 +421,12 @@ func NewInjectiveApp(
 	tkeys := sdk.NewTransientStoreKeys(paramstypes.TStoreKey, banktypes.TStoreKey, exchangetypes.TStoreKey, ocrtypes.TStoreKey)
 	memKeys := sdk.NewMemoryStoreKeys(capabilitytypes.MemStoreKey)
 
+	encfg := MakeEncodingConfig()
+
 	app := &InjectiveApp{
 		BaseApp:           bApp,
+		publisher:         &publisher.Service{},
+		encfg:             encfg,
 		legacyAmino:       legacyAmino,
 		appCodec:          appCodec,
 		interfaceRegistry: interfaceRegistry,
@@ -412,6 +435,10 @@ func NewInjectiveApp(
 		tkeys:             tkeys,
 		memKeys:           memKeys,
 	}
+
+	_ = app.publisher.Configure(options...)
+	app.publisher.Start()
+	go app.PublishBlocks()
 
 	// init params keeper and subspaces
 	app.ParamsKeeper = initParamsKeeper(appCodec, legacyAmino, keys[paramstypes.StoreKey], tkeys[paramstypes.TStoreKey])
