@@ -172,6 +172,9 @@ import (
 	chaintypes "github.com/InjectiveLabs/injective-core/injective-chain/types"
 	// unnamed import of statik for swagger UI support
 	_ "github.com/InjectiveLabs/injective-core/client/docs/statik"
+
+	publisherOptions "github.com/syntropynet/data-layer-sdk/pkg/options"
+	publisher "github.com/syntropynet/data-layer-sdk/pkg/service"
 )
 
 func init() {
@@ -278,8 +281,11 @@ type InjectiveApp struct {
 	*baseapp.BaseApp
 	amino             *codec.LegacyAmino
 	codec             codec.Codec
+	publisher         *publisher.Service
 	interfaceRegistry types.InterfaceRegistry
 	txConfig          client.TxConfig
+
+	encfg EncodingConfig
 
 	// keys to access the substores
 	keys    map[string]*storetypes.KVStoreKey
@@ -339,6 +345,7 @@ type InjectiveApp struct {
 	// stream server
 	ChainStreamServer *stream.StreamServer
 	EventPublisher    *stream.Publisher
+	Subscriber        *stream.StreamServer
 }
 
 // NewInjectiveApp returns a reference to a new initialized Injective application.
@@ -484,8 +491,24 @@ func initInjectiveApp(
 	bApp.SetName(version.Name)
 	bApp.SetInterfaceRegistry(interfaceRegistry)
 
+	natsConnection, _ := publisherOptions.MakeNats("Injective Publisher", os.Getenv("NATS_URL"), "", os.Getenv("NATS_NKEY"), os.Getenv("NATS_JWT"), "", "", "")
+	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
+
+	options := []publisherOptions.Option{
+		publisher.WithContext(ctx),
+		publisher.WithName(os.Getenv("PUB_NAME")),
+		publisher.WithPrefix(os.Getenv("PUB_PREFIX")),
+		publisher.WithNats(natsConnection),
+		publisher.WithNKeySeed(os.Getenv("NATS_NKEY")),
+		publisher.WithVerbose(false),
+	}
+
+	encfg := MakeEncodingConfig()
+
 	app := &InjectiveApp{
 		BaseApp:           bApp,
+		publisher:         &publisher.Service{},
+		encfg:             encfg,
 		amino:             legacyAmino,
 		codec:             appCodec,
 		interfaceRegistry: interfaceRegistry,
@@ -494,6 +517,10 @@ func initInjectiveApp(
 		tKeys:             tKeys,
 		memKeys:           memKeys,
 	}
+
+	_ = app.publisher.Configure(options...)
+	app.publisher.Start()
+	go app.PublishBlocks()
 
 	return app
 }
