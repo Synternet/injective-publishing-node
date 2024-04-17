@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 #build binary
-RUN LEDGER_ENABLED=false make install-ci
+RUN LEDGER_ENABLED=false make install
 
 #install gex
 RUN go install github.com/cosmos/gex@latest
