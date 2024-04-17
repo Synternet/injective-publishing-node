@@ -1,5 +1,5 @@
 #install packages for build layer
-FROM golang:1.19-bookworm as builder
+FROM golang:1.20-bookworm as builder
 RUN apt install git gcc make libc-dev
 
 ADD https://github.com/CosmWasm/wasmvm/releases/download/v1.5.0/libwasmvm.x86_64.so /lib/libwasmvm.x86_64.so
@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 #build binary
-RUN LEDGER_ENABLED=false make install
+RUN LEDGER_ENABLED=false make install-ci
 
 #install gex
 RUN go install github.com/cosmos/gex@latest
