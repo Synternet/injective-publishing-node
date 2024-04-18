@@ -2,12 +2,12 @@ name: Release Binary on Release Creation
 
 on:
   release:
-    types: [created]
+    types: [created, edited]
 
 jobs:
   build-and-upload:
     name: Build and Upload Binary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
       - name: Checkout code
@@ -21,11 +21,8 @@ jobs:
       - name: Run Make Install
         run: make install
 
-      - name: List files in cmd
-        run: ls -al ./cmd
-
-      - name: List files in cmd/injectived
-        run: whereis injectived
+      - name: Make binary executable
+        run: chmod +x /home/runner/go/bin/injectived
 
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
