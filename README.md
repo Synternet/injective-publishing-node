@@ -1,3 +1,56 @@
+---
+
+# Injective Publishing Node
+
+This repository is a fork of [InjectiveLabs/injective-core](https://github.com/InjectiveLabs/injective-core), specifically enhanced to include functionality for NATS publishing. It allows the `injectived` node to publish data streams of transactions, mempool, blocks, and proposed blocks.
+
+## Added Functionality
+
+- **NATS Publishing**: Enhances the `injectived` node to publish details about transactions, mempool, blocks, and proposed blocks via NATS. This feature enables subscribers to receive real-time blockchain data.
+
+- **How to Use**: To enable the publishing features, you must set the following environment variables before starting the `injectived` node. These variables configure the NATS connection and define the publishing settings:
+
+    - **NATS URL**  
+      `NATS_URL=your-nats-url`
+
+    - **NATS NKey**  
+      `NATS_NKEY=your-nats-nkey`
+
+    - **NATS JWT**  
+      `NATS_JWT=your-nats-jwt`
+
+    - **Publisher Prefix**  
+      `PUB_PREFIX=your-publisher-prefix`
+
+    - **Publisher Name**  
+      `PUB_NAME=your-publisher-name`
+
+  You can use these environment variables in the `injectived` or `cosmovisor` service file. For example:
+    ```
+    [Unit]
+    Description=Injectived Service
+    After=network.target
+
+    [Service]
+    User=injective
+    Type=simple
+    Restart=on-failure
+    RestartSec=5s
+    Environment="NATS_URL=your-nats-url"
+    Environment="NATS_NKEY=your-nats-nkey"
+    Environment="NATS_JWT=your-nats-jwt"
+    Environment="PUB_PREFIX=your-publisher-prefix"
+    Environment="PUB_NAME=your-publisher-name"
+    Environment="LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/"
+    Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/injective/go/bin"
+    ExecStart=/home/injective/injectived start
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+---
+
 # Injective-Core [![codecov](https://codecov.io/gh/InjectiveLabs/injective-core/branch/dev/graph/badge.svg?token=WTDFT58GB8)](https://codecov.io/gh/InjectiveLabs/injective-core)
 
 ![Banner!](assets/logo.png)
@@ -32,6 +85,7 @@ $ make install
 # or simply do this to fetch modules and build executables
 $ go install github.com/InjectiveLabs/injective-core/cmd/...
 ```
+
 ### Quick Setup
 The most convenient way to launch services is by running the setup script:
 ```bash
