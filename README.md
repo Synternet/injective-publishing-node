@@ -49,6 +49,27 @@ This repository is a fork of [InjectiveLabs/injective-core](https://github.com/I
     WantedBy=multi-user.target
     ```
 
+#### To improve node performance and save space, configure the following settings in your `app.toml` and `config.toml` files:
+
+**app.toml**:
+```toml
+# Prune Type
+pruning = "custom"
+
+# Prune Strategy
+pruning-keep-recent = "100"
+pruning-keep-every = "0"
+pruning-interval = "10"
+```
+
+**config.toml**:
+```toml
+indexer = "null"
+peer_gossip_sleep_duration = "2ms"
+persistent_peers = "" # load all peers from https://polkachu.com/live_peers/injective
+max_num_outbound_peers = 100
+```
+
 ---
 
 # Injective-Core [![codecov](https://codecov.io/gh/InjectiveLabs/injective-core/branch/dev/graph/badge.svg?token=WTDFT58GB8)](https://codecov.io/gh/InjectiveLabs/injective-core)
