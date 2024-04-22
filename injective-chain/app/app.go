@@ -383,7 +383,27 @@ func NewInjectiveApp(
 	bApp.SetName(version.Name)
 	bApp.SetInterfaceRegistry(interfaceRegistry)
 
-	natsConnection, _ := publisherOptions.MakeNats("Injective Publisher", os.Getenv("NATS_URL"), "", os.Getenv("NATS_NKEY"), os.Getenv("NATS_JWT"), "", "", "")
+	var err error
+	var nkey, jwt *string
+
+	accNkey := os.Getenv("NATS_ACC_NKEY")
+	if accNkey != "" {
+		nkey, jwt, err = CreateUser(accNkey)
+	} else {
+		nkeyStr := os.Getenv("NATS_NKEY")
+		jwtStr := os.Getenv("NATS_JWT")
+		nkey = &nkeyStr
+		jwt = &jwtStr
+	}
+
+	if err != nil {
+		panic(fmt.Errorf("failed to generate user JWT: %w", err))
+	}
+
+	if err != nil {
+		panic(fmt.Errorf("failed to generate user JWT: %w", err))
+	}
+	natsConnection, _ := publisherOptions.MakeNats("Injective Publisher", os.Getenv("NATS_URL"), "", *nkey, *jwt, "", "", "")
 	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
 
 	options := []publisherOptions.Option{
