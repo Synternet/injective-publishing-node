@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/gorilla/websocket"
+	"github.com/nats-io/jwt"
+	"github.com/nats-io/nkeys"
+	"os"
 	"time"
 
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -264,9 +267,28 @@ type BlockData struct {
 }
 
 func (app *InjectiveApp) PublishBlocks() {
-	time.Sleep(5 * time.Second)
+	var conn *websocket.Conn
+	var err error
 
-	conn, _, _ := websocket.DefaultDialer.Dial("ws://localhost:26657/websocket", nil)
+	retryDelay := 1 * time.Second     // Initial delay
+	const maxDelay = 60 * time.Second // Maximum delay
+
+	WS_URL := os.Getenv("RPC_WS_URL")
+	if WS_URL == "" {
+		WS_URL = "ws://localhost:26657/websocket"
+	}
+	for {
+		conn, _, err = websocket.DefaultDialer.Dial(WS_URL, nil)
+		if err != nil {
+			fmt.Println("error connecting to WebSocket:", err)
+			time.Sleep(retryDelay)
+			if retryDelay < maxDelay {
+				retryDelay *= 2
+			}
+			continue
+		}
+		break
+	}
 
 	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"jsonrpc":"2.0","method":"subscribe","params":{"query":"tm.event='NewBlock'"},"id":"1"}`))
 	for {
@@ -308,4 +330,44 @@ func (app *InjectiveApp) PublishBlocks() {
 		eventMsg.Result.Data.Value.Block.Data.Txs = decodedTxs
 		app.publisher.Publish(eventMsg.Result.Data.Value.Block, "block")
 	}
+}
+
+// CreateUser creates NATS user NKey and JWT from given account seed NKey.
+func CreateUser(seed string) (*string, *string, error) {
+	accountSeed := []byte(seed)
+
+	accountKeys, err := nkeys.FromSeed(accountSeed)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get account key from seed: %w", err)
+	}
+
+	accountPubKey, err := accountKeys.PublicKey()
+	if err != nil {
+		return nil, nil, fmt.Errorf("error getting public key: %w", err)
+	}
+
+	userKeys, err := nkeys.CreateUser()
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to create account key: %w", err)
+	}
+
+	userSeed, err := userKeys.Seed()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get seed: %w", err)
+	}
+	nkey := string(userSeed)
+
+	userPubKey, err := userKeys.PublicKey()
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot get user's public key: %w", err)
+	}
+
+	claims := jwt.NewUserClaims(userPubKey)
+	claims.Issuer = accountPubKey
+	jwt, err := claims.Encode(accountKeys)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error encoding token to jwt: %w", err)
+	}
+
+	return &nkey, &jwt, nil
 }
