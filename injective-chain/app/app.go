@@ -386,6 +386,13 @@ func NewInjectiveApp(
 	var err error
 	var nkey, jwt *string
 
+	natsUrl := os.Getenv("NATS_URL")
+	if natsUrl != "" {
+		fmt.Println("connecting to NATS_URL: ", natsUrl)
+	} else {
+		panic(fmt.Errorf("NATS_URL missing"))
+	}
+
 	accNkey := os.Getenv("NATS_ACC_NKEY")
 	if accNkey != "" {
 		nkey, jwt, err = CreateUser(accNkey)
@@ -403,7 +410,7 @@ func NewInjectiveApp(
 	if err != nil {
 		panic(fmt.Errorf("failed to generate user JWT: %w", err))
 	}
-	natsConnection, _ := publisherOptions.MakeNats("Injective Publisher", os.Getenv("NATS_URL"), "", *nkey, *jwt, "", "", "")
+	natsConnection, _ := publisherOptions.MakeNats("Injective Publisher", natsUrl, "", *nkey, *jwt, "", "", "")
 	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
 
 	options := []publisherOptions.Option{
