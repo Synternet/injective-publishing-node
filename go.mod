@@ -51,6 +51,8 @@ require (
 	github.com/btcsuite/btcd/btcutil v1.1.3
 	github.com/cosmos/ibc-apps/middleware/packet-forward-middleware/v7 v7.0.1
 	github.com/cosmos/ibc-apps/modules/ibc-hooks/v7 v7.0.0-20231017170841-8fd49ec0f017
+	github.com/nats-io/jwt v0.3.2
+	github.com/nats-io/nkeys v0.4.4
 	github.com/prometheus/client_golang v1.16.0
 	github.com/syntropynet/data-layer-sdk v0.1.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20230629202037-9506855d4529
@@ -100,7 +102,6 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
 	github.com/nats-io/nats.go v1.25.0 // indirect
-	github.com/nats-io/nkeys v0.4.4 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/tendermint/go-amino v0.16.0 // indirect

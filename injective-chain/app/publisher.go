@@ -1,7 +1,9 @@
 package app
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/types/tx"
@@ -18,22 +20,27 @@ type Mempool struct {
 	Transactions []*Transaction `json:"txs"`
 }
 
+func generateTxId(txBytes []byte) string {
+	hash := sha256.Sum256(txBytes)
+	return hex.EncodeToString(hash[:])
+}
+
 func (app *InjectiveApp) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
 	app.LastCommitID()
 	resp := app.BaseApp.CheckTx(req)
-	if resp.Code == 0 {
-		transaction, err := decodeTx(req.GetTx(), app.encfg)
-		if err != nil {
-			fmt.Println("Error decoding transaction:", err)
-			return resp
-		}
-
-		mempool := Mempool{
-			Transactions: []*Transaction{&transaction},
-		}
-
-		app.publisher.Publish(mempool, "mempool")
+	transaction, err := decodeTx(req.GetTx(), app.encfg)
+	if err != nil {
+		fmt.Println("Error decoding transaction:", err)
+		return resp
 	}
+
+	txId := generateTxId(req.GetTx())
+
+	mempool := Mempool{
+		Transactions: []*Transaction{&transaction},
+	}
+	mempool.Transactions[0].TxID = txId // assign generated txId
+	app.publisher.Publish(mempool, "mempool")
 	return resp
 }
 
@@ -69,11 +76,14 @@ func decodeTx(txBytes []byte, encfg EncodingConfig) (Transaction, error) {
 	if err != nil {
 		return transaction, fmt.Errorf("failed to marshal tx: %w", err)
 	}
-
 	err = json.Unmarshal(b, &transaction.Tx)
 	if err != nil {
 		return transaction, fmt.Errorf("failed to unmarshal tx: %w", err)
 	}
+
+	txId := generateTxId(txBytes)
+
+	transaction.TxID = txId
 
 	return transaction, nil
 }
