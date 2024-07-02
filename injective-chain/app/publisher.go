@@ -152,9 +152,6 @@ func (app *InjectiveApp) ProcessProposal(proposal abci.RequestProcessProposal) a
 	app.publisher.Publish(block, "proposed_block")
 
 	resp := app.BaseApp.ProcessProposal(proposal)
-	if resp.Status == abci.ResponseProcessProposal_ACCEPT {
-		app.publisher.Publish(block, "proposed_block_accept")
-	}
 	return resp
 }
 
