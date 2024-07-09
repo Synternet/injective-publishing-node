@@ -106,13 +106,13 @@ type Block struct {
 }
 
 type BlockProposal struct {
-	Txs                [][]any
-	ProposedLastCommit any
-	Hash               []byte
-	Height             int64
-	Time               time.Time
-	NextValidatorsHash []byte
-	ProposerAddress    []byte
+	Txs                [][]any   `json:"txs"`
+	ProposedLastCommit any       `json:"proposed_last_commit"`
+	Hash               []byte    `json:"hash"`
+	Height             int64     `json:"height"`
+	Time               time.Time `json:"time"`
+	NextValidatorsHash []byte    `json:"next_validators_hash"`
+	ProposerAddress    []byte    `json:"proposer_address"`
 }
 
 func decodeTxs(txBytes [][]byte, encfg EncodingConfig) ([]Transaction, error) {
