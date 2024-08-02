@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	injcodectypes "github.com/InjectiveLabs/injective-core/injective-chain/codec/types"
 	"github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/jwt"
@@ -25,13 +26,13 @@ func generateTxId(txBytes []byte) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func (app *InjectiveApp) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
+func (app *InjectiveApp) CheckTx(req *abci.RequestCheckTx) (*abci.ResponseCheckTx, error) {
 	app.LastCommitID()
-	resp := app.BaseApp.CheckTx(req)
+	resp, _ := app.BaseApp.CheckTx(req)
 	transaction, err := decodeTx(req.GetTx(), app.encfg)
 	if err != nil {
 		fmt.Println("Error decoding transaction:", err)
-		return resp
+		return resp, err
 	}
 
 	txId := generateTxId(req.GetTx())
@@ -41,7 +42,7 @@ func (app *InjectiveApp) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
 	}
 	mempool.Transactions[0].TxID = txId // assign generated txId
 	app.publisher.Publish(mempool, "mempool")
-	return resp
+	return resp, nil
 }
 
 type Transaction struct {
@@ -58,7 +59,7 @@ type TxProtoGetter interface {
 	GetProtoTx() *tx.Tx
 }
 
-func decodeTx(txBytes []byte, encfg EncodingConfig) (Transaction, error) {
+func decodeTx(txBytes []byte, encfg injcodectypes.EncodingConfig) (Transaction, error) {
 	var transaction Transaction
 
 	txproto, err := encfg.TxConfig.TxDecoder()(txBytes)
@@ -72,7 +73,7 @@ func decodeTx(txBytes []byte, encfg EncodingConfig) (Transaction, error) {
 	}
 
 	tx := getter.GetProtoTx()
-	b, err := encfg.Marshaler.MarshalJSON(tx)
+	b, err := encfg.Codec.MarshalJSON(tx)
 	if err != nil {
 		return transaction, fmt.Errorf("failed to marshal tx: %w", err)
 	}
@@ -88,15 +89,15 @@ func decodeTx(txBytes []byte, encfg EncodingConfig) (Transaction, error) {
 	return transaction, nil
 }
 
-func (app *InjectiveApp) DeliverTx(req abci.RequestDeliverTx) abci.ResponseDeliverTx {
-	transaction, err := decodeTx(req.GetTx(), app.encfg)
+func (app *InjectiveApp) deliverTx(tx []byte) *abci.ExecTxResult {
+	transaction, err := decodeTx(tx, app.encfg)
 	if err != nil {
 		fmt.Println(err)
 	}
+	var resp *abci.ExecTxResult
 
 	app.publisher.Publish(transaction, "tx")
 
-	resp := app.BaseApp.DeliverTx(req)
 	return resp
 }
 
@@ -115,7 +116,7 @@ type BlockProposal struct {
 	ProposerAddress    []byte    `json:"proposer_address"`
 }
 
-func decodeTxs(txBytes [][]byte, encfg EncodingConfig) ([]Transaction, error) {
+func decodeTxs(txBytes [][]byte, encfg injcodectypes.EncodingConfig) ([]Transaction, error) {
 	var transactions []Transaction
 
 	for _, bytes := range txBytes {
@@ -129,8 +130,8 @@ func decodeTxs(txBytes [][]byte, encfg EncodingConfig) ([]Transaction, error) {
 	return transactions, nil
 }
 
-func (app *InjectiveApp) ProcessProposal(proposal abci.RequestProcessProposal) abci.ResponseProcessProposal {
-	decodedTxs, err := decodeTxs(proposal.Txs, app.encfg)
+func (app *InjectiveApp) ProcessProposal(req *abci.RequestProcessProposal) (resp *abci.ResponseProcessProposal, err error) {
+	decodedTxs, err := decodeTxs(req.Txs, app.encfg)
 	if err != nil {
 		fmt.Println("Error decoding transactions:", err)
 	}
@@ -141,18 +142,18 @@ func (app *InjectiveApp) ProcessProposal(proposal abci.RequestProcessProposal) a
 	}
 	block := BlockProposal{
 		Txs:                txs,
-		ProposedLastCommit: proposal.ProposedLastCommit,
-		Hash:               proposal.Hash,
-		Height:             proposal.Height,
-		Time:               proposal.Time,
-		NextValidatorsHash: proposal.NextValidatorsHash,
-		ProposerAddress:    proposal.ProposerAddress,
+		ProposedLastCommit: req.ProposedLastCommit,
+		Hash:               req.Hash,
+		Height:             req.Height,
+		Time:               req.Time,
+		NextValidatorsHash: req.NextValidatorsHash,
+		ProposerAddress:    req.ProposerAddress,
 	}
 
 	app.publisher.Publish(block, "proposed_block")
 
-	resp := app.BaseApp.ProcessProposal(proposal)
-	return resp
+	resp, err = app.BaseApp.ProcessProposal(req)
+	return resp, err
 }
 
 type BlockDataOutput struct {

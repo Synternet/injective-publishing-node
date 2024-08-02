@@ -1,10 +1,13 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 
@@ -285,7 +288,7 @@ type InjectiveApp struct {
 	interfaceRegistry types.InterfaceRegistry
 	txConfig          client.TxConfig
 
-	encfg EncodingConfig
+	encfg injcodectypes.EncodingConfig
 
 	// keys to access the substores
 	keys    map[string]*storetypes.KVStoreKey
@@ -530,7 +533,7 @@ func initInjectiveApp(
 		publisher.WithVerbose(false),
 	}
 
-	encfg := MakeEncodingConfig()
+	encfg := injcodectypes.MakeEncodingConfig()
 
 	app := &InjectiveApp{
 		BaseApp:           bApp,
