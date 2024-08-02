@@ -533,12 +533,10 @@ func initInjectiveApp(
 		publisher.WithVerbose(false),
 	}
 
-	encfg := injcodectypes.MakeEncodingConfig()
-
 	app := &InjectiveApp{
 		BaseApp:           bApp,
 		publisher:         &publisher.Service{},
-		encfg:             encfg,
+		encfg:             encodingConfig,
 		amino:             legacyAmino,
 		codec:             appCodec,
 		interfaceRegistry: interfaceRegistry,
@@ -550,7 +548,7 @@ func initInjectiveApp(
 
 	_ = app.publisher.Configure(options...)
 	app.publisher.Start()
-	go app.PublishBlocks()
+	go app.PublishBlocksAndTxs()
 
 	return app
 }

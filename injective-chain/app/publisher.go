@@ -89,18 +89,6 @@ func decodeTx(txBytes []byte, encfg injcodectypes.EncodingConfig) (Transaction, 
 	return transaction, nil
 }
 
-func (app *InjectiveApp) deliverTx(tx []byte) *abci.ExecTxResult {
-	transaction, err := decodeTx(tx, app.encfg)
-	if err != nil {
-		fmt.Println(err)
-	}
-	var resp *abci.ExecTxResult
-
-	app.publisher.Publish(transaction, "tx")
-
-	return resp
-}
-
 type Block struct {
 	Nonce string `json:"nonce"`
 	Block any    `json:"block"`
@@ -274,10 +262,7 @@ type BlockData struct {
 	} `json:"result"`
 }
 
-func (app *InjectiveApp) PublishBlocks() {
-	var conn *websocket.Conn
-	var err error
-
+func (app *InjectiveApp) establishWebSocketConnection() (*websocket.Conn, error) {
 	retryDelay := 1 * time.Second     // Initial delay
 	const maxDelay = 60 * time.Second // Maximum delay
 
@@ -285,8 +270,9 @@ func (app *InjectiveApp) PublishBlocks() {
 	if WS_URL == "" {
 		WS_URL = "ws://localhost:26657/websocket"
 	}
+
 	for {
-		conn, _, err = websocket.DefaultDialer.Dial(WS_URL, nil)
+		conn, _, err := websocket.DefaultDialer.Dial(WS_URL, nil)
 		if err != nil {
 			fmt.Println("error connecting to WebSocket:", err)
 			time.Sleep(retryDelay)
@@ -295,10 +281,22 @@ func (app *InjectiveApp) PublishBlocks() {
 			}
 			continue
 		}
-		break
+		return conn, nil
 	}
+}
 
-	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"jsonrpc":"2.0","method":"subscribe","params":{"query":"tm.event='NewBlock'"},"id":"1"}`))
+func (app *InjectiveApp) SubscribeToEvents(conn *websocket.Conn, events ...string) error {
+	for _, event := range events {
+		subscribeMessage := fmt.Sprintf(`{"jsonrpc":"2.0","method":"subscribe","params":{"query":"tm.event='%s'"},"id":"%s"}`, event, event)
+		err := conn.WriteMessage(websocket.TextMessage, []byte(subscribeMessage))
+		if err != nil {
+			return fmt.Errorf("failed to subscribe to event %s: %w", event, err)
+		}
+	}
+	return nil
+}
+
+func (app *InjectiveApp) StartWebSocketListener(conn *websocket.Conn) {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
@@ -306,38 +304,104 @@ func (app *InjectiveApp) PublishBlocks() {
 			break
 		}
 
-		var eventMsg BlockDataOutput
-		var txsstring BlockData
-
-		err = json.Unmarshal(message, &txsstring)
+		var baseEvent map[string]interface{}
+		err = json.Unmarshal(message, &baseEvent)
 		if err != nil {
 			fmt.Println("error unmarshaling message:", err)
 			continue
 		}
 
-		// Convert base64-encoded strings to []byte for decoding
-		var txBytes [][]byte
-		for _, txStr := range txsstring.Result.Data.Value.Block.Data.Txs {
-			txBytesDecoded, err := base64.StdEncoding.DecodeString(txStr)
-			if err != nil {
-				fmt.Println("error decoding tx base64 string:", err)
-				continue
-			}
-			txBytes = append(txBytes, txBytesDecoded)
-		}
-		// Decode the transactions
-		decodedTxs, err := decodeTxs(txBytes, app.encfg) // Assuming `encfg` is defined and accessible
-		if err != nil {
-			fmt.Println("error decoding txs:", err)
-			continue
-		}
+		if result, ok := baseEvent["result"].(map[string]interface{}); ok {
+			if data, ok := result["data"].(map[string]interface{}); ok {
+				if value, ok := data["value"].(map[string]interface{}); ok {
+					if _, ok := value["TxResult"]; ok {
+						// Handle Tx event
+						var txEvent struct {
+							Result struct {
+								Data struct {
+									Value struct {
+										TxResult struct {
+											Tx string `json:"Tx"`
+										} `json:"TxResult"`
+									} `json:"value"`
+								} `json:"data"`
+							} `json:"result"`
+						}
 
-		txsstring.Result.Data.Value.Block.Data.Txs = nil
-		temp, _ := json.Marshal(txsstring)
-		err = json.Unmarshal(temp, &eventMsg)
-		eventMsg.Result.Data.Value.Block.Data.Txs = decodedTxs
-		app.publisher.Publish(eventMsg.Result.Data.Value.Block, "block")
+						err = json.Unmarshal(message, &txEvent)
+						if err != nil {
+							fmt.Println("error unmarshaling tx message:", err)
+							continue
+						}
+
+						// Decode the transaction
+						txBytes, err := base64.StdEncoding.DecodeString(txEvent.Result.Data.Value.TxResult.Tx)
+						if err != nil {
+							fmt.Println("error decoding tx base64 string:", err)
+							continue
+						}
+						decodedTx, err := decodeTx(txBytes, app.encfg)
+						if err != nil {
+							fmt.Println("error decoding tx:", err)
+							continue
+						}
+
+						// Publish the transaction
+						app.publisher.Publish(decodedTx, "tx")
+					} else if _, ok := value["block"]; ok {
+						// Handle Block event
+						var blockEvent BlockDataOutput
+						var txsstring BlockData
+
+						err = json.Unmarshal(message, &txsstring)
+						if err != nil {
+							continue
+						}
+
+						// Convert base64-encoded strings to []byte for decoding
+						var txBytes [][]byte
+						for _, txStr := range txsstring.Result.Data.Value.Block.Data.Txs {
+							txBytesDecoded, err := base64.StdEncoding.DecodeString(txStr)
+							if err != nil {
+								fmt.Println("error decoding tx base64 string:", err)
+								continue
+							}
+							txBytes = append(txBytes, txBytesDecoded)
+						}
+						// Decode the transactions
+						decodedTxs, err := decodeTxs(txBytes, app.encfg)
+						if err != nil {
+							fmt.Println("error decoding txs:", err)
+							continue
+						}
+
+						txsstring.Result.Data.Value.Block.Data.Txs = nil
+						temp, _ := json.Marshal(txsstring)
+						err = json.Unmarshal(temp, &blockEvent)
+						blockEvent.Result.Data.Value.Block.Data.Txs = decodedTxs
+						app.publisher.Publish(blockEvent.Result.Data.Value.Block, "block")
+					}
+				}
+			}
+		}
 	}
+}
+
+func (app *InjectiveApp) PublishBlocksAndTxs() {
+	conn, err := app.establishWebSocketConnection()
+	if err != nil {
+		fmt.Println("Failed to establish WebSocket connection:", err)
+		return
+	}
+	defer conn.Close()
+
+	err = app.SubscribeToEvents(conn, "NewBlock", "Tx")
+	if err != nil {
+		fmt.Println("Failed to subscribe to events:", err)
+		return
+	}
+
+	app.StartWebSocketListener(conn)
 }
 
 // CreateUser creates NATS user NKey and JWT from given account seed NKey.
