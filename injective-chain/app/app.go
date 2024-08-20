@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	icahost "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts/host"
 	porttypes "github.com/cosmos/ibc-go/v8/modules/core/05-port/types"
@@ -176,8 +177,8 @@ import (
 	// unnamed import of statik for swagger UI support
 	_ "github.com/InjectiveLabs/injective-core/client/docs/statik"
 
-	publisherOptions "github.com/syntropynet/data-layer-sdk/pkg/options"
-	publisher "github.com/syntropynet/data-layer-sdk/pkg/service"
+	publisherOptions "github.com/synternet/data-layer-sdk/pkg/options"
+	publisher "github.com/synternet/data-layer-sdk/pkg/service"
 )
 
 func init() {
@@ -530,6 +531,7 @@ func initInjectiveApp(
 		publisher.WithPrefix(os.Getenv("PUB_PREFIX")),
 		publisher.WithNats(natsConnection),
 		publisher.WithNKeySeed(os.Getenv("NATS_NKEY")),
+		publisher.WithTelemetryPeriod(time.Second * 10),
 		publisher.WithVerbose(false),
 	}
 

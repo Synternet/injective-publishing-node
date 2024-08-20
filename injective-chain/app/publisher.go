@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/jwt"
 	"github.com/nats-io/nkeys"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"os"
 	"time"
 
@@ -104,6 +105,11 @@ type BlockProposal struct {
 	ProposerAddress    []byte    `json:"proposer_address"`
 }
 
+func (BlockProposal) ProtoReflect() protoreflect.Message { return nil }
+func (Block) ProtoReflect() protoreflect.Message         { return nil }
+func (Mempool) ProtoReflect() protoreflect.Message       { return nil }
+func (Transaction) ProtoReflect() protoreflect.Message   { return nil }
+
 func decodeTxs(txBytes [][]byte, encfg injcodectypes.EncodingConfig) ([]Transaction, error) {
 	var transactions []Transaction
 
@@ -116,6 +122,20 @@ func decodeTxs(txBytes [][]byte, encfg injcodectypes.EncodingConfig) ([]Transact
 	}
 
 	return transactions, nil
+}
+
+func (app *InjectiveApp) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.ResponseFinalizeBlock, err error) {
+	res, err = app.BaseApp.FinalizeBlock(req)
+	if err == nil {
+		for _, rawTx := range req.Txs {
+			transaction, err := decodeTx(rawTx, app.encfg)
+			if err != nil {
+				fmt.Println(err)
+			}
+			app.publisher.Publish(transaction, "tx")
+		}
+	}
+	return res, err
 }
 
 func (app *InjectiveApp) ProcessProposal(req *abci.RequestProcessProposal) (resp *abci.ResponseProcessProposal, err error) {
@@ -379,7 +399,8 @@ func (app *InjectiveApp) StartWebSocketListener(conn *websocket.Conn) {
 						temp, _ := json.Marshal(txsstring)
 						err = json.Unmarshal(temp, &blockEvent)
 						blockEvent.Result.Data.Value.Block.Data.Txs = decodedTxs
-						app.publisher.Publish(blockEvent.Result.Data.Value.Block, "block")
+						blockBytes, _ := json.Marshal(blockEvent.Result.Data.Value.Block)
+						app.publisher.PublishBuf(blockBytes, "block")
 					}
 				}
 			}
@@ -395,7 +416,7 @@ func (app *InjectiveApp) PublishBlocksAndTxs() {
 	}
 	defer conn.Close()
 
-	err = app.SubscribeToEvents(conn, "NewBlock", "Tx")
+	err = app.SubscribeToEvents(conn, "NewBlock")
 	if err != nil {
 		fmt.Println("Failed to subscribe to events:", err)
 		return

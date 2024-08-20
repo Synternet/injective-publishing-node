@@ -67,7 +67,7 @@ require (
 	github.com/nats-io/jwt v0.3.2
 	github.com/nats-io/nkeys v0.4.6
 	github.com/prometheus/client_golang v1.19.0
-	github.com/syntropynet/data-layer-sdk v0.1.0
+	github.com/synternet/data-layer-sdk v0.4.2
 	golang.org/x/sync v0.7.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20240227224415-6ceb2ff114de
 	gopkg.in/DataDog/dd-trace-go.v1 v1.62.0
