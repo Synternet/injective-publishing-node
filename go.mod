@@ -64,9 +64,9 @@ require (
 	github.com/cosmos/ibc-go/modules/capability v1.0.0
 	github.com/cosmos/rosetta v0.50.6
 	github.com/hashicorp/go-metrics v0.5.3
-	github.com/prometheus/client_golang v1.19.1
 	github.com/nats-io/jwt v0.3.2
-	github.com/nats-io/nkeys v0.4.6
+	github.com/nats-io/nkeys v0.4.7
+	github.com/prometheus/client_golang v1.19.1
 	github.com/synternet/data-layer-sdk v0.4.2
 	golang.org/x/sync v0.7.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237
@@ -148,7 +148,7 @@ require (
 	github.com/manifoldco/promptui v0.9.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
-	github.com/nats-io/nats.go v1.31.0 // indirect
+	github.com/nats-io/nats.go v1.34.0 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20230904125328-1f23a7beb09a // indirect
 	github.com/oklog/run v1.1.0 // indirect
