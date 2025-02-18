@@ -7,8 +7,6 @@ import (
 	"os"
 	"time"
 
-	servertypes "github.com/cosmos/cosmos-sdk/server/types"
-
 	"cosmossdk.io/log"
 	"github.com/cometbft/cometbft/libs/pubsub"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
