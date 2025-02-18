@@ -119,10 +119,6 @@ $ ./injectived.sh
 
 Voila! You have now successfully setup a full node on the Injective Chain.
 
-## Generating the module specification docs
-```bash
-$ cd docs && yarn && yarn run serve
-```
 ## Generating REST and gRPC Gateway docs
 First, ensure that the `Enable` and `Swagger` values are true in APIConfig set in `cmd/injectived/config/config.go`.
 

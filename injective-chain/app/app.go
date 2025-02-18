@@ -988,7 +988,6 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		&app.InsuranceKeeper,
 		app.DistrKeeper,
 		app.StakingKeeper,
-		app.MsgServiceRouter(),
 		authority,
 	)
 
@@ -1011,6 +1010,7 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		app.AccountKeeper,
 		app.BankKeeper.(bankkeeper.BaseKeeper).WithMintCoinsRestriction(tokenfactorytypes.NewTokenFactoryDenomMintCoinsRestriction()),
 		app.DistrKeeper,
+		GetModuleAccAddresses(),
 		authority,
 	)
 
@@ -1123,8 +1123,10 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		app.TokenFactoryKeeper,
 		app.WasmKeeper,
 		authtypes.NewModuleAddress(tokenfactorytypes.ModuleName).String(),
+		GetModuleAccAddresses(),
 		authority,
 	)
+	app.TokenFactoryKeeper.SetPermissionsKeeper(app.PermissionsKeeper)
 
 	app.ScopedICAHostKeeper = app.CapabilityKeeper.ScopeToModule(icahosttypes.SubModuleName)
 	app.ICAHostKeeper = icahostkeeper.NewKeeper(
@@ -1193,7 +1195,7 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		AddRoute(govtypes.RouterKey, govv1beta1.ProposalHandler).
 		AddRoute(paramproposal.RouterKey, params.NewParamChangeProposalHandler(app.ParamsKeeper)).
 		AddRoute(ibcclienttypes.RouterKey, ibcclient.NewClientProposalHandler(app.IBCKeeper.ClientKeeper)). //nolint:staticcheck // SA1019 Existing use of deprecated but supported function
-		AddRoute(exchangetypes.RouterKey, exchange.NewExchangeProposalHandler(app.ExchangeKeeper)).
+		AddRoute(exchangetypes.RouterKey, exchangekeeper.NewExchangeProposalHandler(app.ExchangeKeeper)).
 		AddRoute(oracletypes.RouterKey, oracle.NewOracleProposalHandler(app.OracleKeeper)).
 		AddRoute(auctiontypes.RouterKey, auction.NewAuctionProposalHandler(app.AuctionKeeper)).
 		AddRoute(ocrtypes.RouterKey, ocr.NewOcrProposalHandler(app.OcrKeeper)).
@@ -1460,4 +1462,12 @@ func endBlockerOrder() []string {
 		wasmxtypes.ModuleName,
 		banktypes.ModuleName,
 	}
+}
+
+func GetModuleAccAddresses() map[string]bool {
+	moduleAccAddresses := make(map[string]bool)
+	for moduleName := range ModuleBasics {
+		moduleAccAddresses[authtypes.NewModuleAddress(moduleName).String()] = true
+	}
+	return moduleAccAddresses
 }
