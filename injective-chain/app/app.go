@@ -22,6 +22,14 @@ import (
 	tx "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
 	"github.com/gorilla/mux"
 
+	skipabci "github.com/skip-mev/block-sdk/v2/abci"
+	skipchecktx "github.com/skip-mev/block-sdk/v2/abci/checktx"
+	signerextraction "github.com/skip-mev/block-sdk/v2/adapters/signer_extraction_adapter"
+	skipblock "github.com/skip-mev/block-sdk/v2/block"
+	skipbase "github.com/skip-mev/block-sdk/v2/block/base"
+	skiputils "github.com/skip-mev/block-sdk/v2/block/utils"
+	skipdefaultlane "github.com/skip-mev/block-sdk/v2/lanes/base"
+
 	"github.com/spf13/cast"
 
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -33,6 +41,7 @@ import (
 	"cosmossdk.io/client/v2/autocli"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/log"
+	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	"cosmossdk.io/x/evidence"
 	evidencekeeper "cosmossdk.io/x/evidence/keeper"
@@ -146,6 +155,9 @@ import (
 	"github.com/InjectiveLabs/injective-core/client/docs"
 	"github.com/InjectiveLabs/injective-core/injective-chain/app/ante"
 	injcodectypes "github.com/InjectiveLabs/injective-core/injective-chain/codec/types"
+	exchangelane "github.com/InjectiveLabs/injective-core/injective-chain/lanes/exchange"
+	governancelane "github.com/InjectiveLabs/injective-core/injective-chain/lanes/governance"
+	oraclelane "github.com/InjectiveLabs/injective-core/injective-chain/lanes/oracle"
 	"github.com/InjectiveLabs/injective-core/injective-chain/modules/auction"
 	auctionkeeper "github.com/InjectiveLabs/injective-core/injective-chain/modules/auction/keeper"
 	auctiontypes "github.com/InjectiveLabs/injective-core/injective-chain/modules/auction/types"
@@ -169,6 +181,9 @@ import (
 	"github.com/InjectiveLabs/injective-core/injective-chain/modules/tokenfactory"
 	tokenfactorykeeper "github.com/InjectiveLabs/injective-core/injective-chain/modules/tokenfactory/keeper"
 	tokenfactorytypes "github.com/InjectiveLabs/injective-core/injective-chain/modules/tokenfactory/types"
+	"github.com/InjectiveLabs/injective-core/injective-chain/modules/txfees"
+	txfeeskeeper "github.com/InjectiveLabs/injective-core/injective-chain/modules/txfees/keeper"
+	txfeestypes "github.com/InjectiveLabs/injective-core/injective-chain/modules/txfees/types"
 	"github.com/InjectiveLabs/injective-core/injective-chain/modules/wasmx"
 	wasmxkeeper "github.com/InjectiveLabs/injective-core/injective-chain/modules/wasmx/keeper"
 	wasmxtypes "github.com/InjectiveLabs/injective-core/injective-chain/modules/wasmx/types"
@@ -240,6 +255,7 @@ var (
 		ocr.AppModuleBasic{},
 		tokenfactory.AppModuleBasic{},
 		permissionsmodule.AppModuleBasic{},
+		txfees.AppModuleBasic{},
 		wasm.AppModuleBasic{},
 		wasmx.AppModuleBasic{},
 	)
@@ -262,6 +278,7 @@ var (
 		ocrtypes.ModuleName:            nil,
 		tokenfactorytypes.ModuleName:   {authtypes.Minter, authtypes.Burner},
 		permissionsmodule.ModuleName:   nil,
+		txfees.ModuleName:              nil,
 		wasmtypes.ModuleName:           {authtypes.Burner},
 		wasmxtypes.ModuleName:          {authtypes.Burner},
 	}
@@ -269,7 +286,6 @@ var (
 	// module accounts that are allowed to receive tokens
 	allowedReceivingModAcc = map[string]bool{
 		distrtypes.ModuleName:        true,
-		auctiontypes.ModuleName:      true,
 		insurancetypes.ModuleName:    true,
 		exchangetypes.ModuleName:     true,
 		ocrtypes.ModuleName:          true,
@@ -315,7 +331,7 @@ type InjectiveApp struct {
 
 	// injective keepers
 	AuctionKeeper      auctionkeeper.Keeper
-	ExchangeKeeper     exchangekeeper.Keeper
+	ExchangeKeeper     *exchangekeeper.Keeper
 	InsuranceKeeper    insurancekeeper.Keeper
 	TokenFactoryKeeper tokenfactorykeeper.Keeper
 	PermissionsKeeper  permissionskeeper.Keeper
@@ -324,6 +340,7 @@ type InjectiveApp struct {
 	OcrKeeper          ocrkeeper.Keeper
 	WasmKeeper         wasmkeeper.Keeper
 	WasmxKeeper        wasmxkeeper.Keeper
+	TxFeesKeeper       txfeeskeeper.Keeper
 
 	// ibc keepers
 	IBCKeeper           *ibckeeper.Keeper // IBC Keeper must be a pointer in the app, so we can SetRouter on it correctly
@@ -351,6 +368,9 @@ type InjectiveApp struct {
 	ChainStreamServer *stream.StreamServer
 	EventPublisher    *stream.Publisher
 	Subscriber        *stream.StreamServer
+
+	// custom checkTx wrapper to ensure mempool parity between app and cometbft
+	checkTxHandler skipchecktx.CheckTx
 }
 
 // NewInjectiveApp returns a reference to a new initialized Injective application.
@@ -373,6 +393,26 @@ func NewInjectiveApp(
 	oracleModule := app.initKeepers(authority, appOpts, wasmConfig)
 	app.initManagers(oracleModule)
 	app.registerUpgradeHandlers()
+
+	lanes := app.initLanes()
+	oracleLane := lanes.oracleLane
+	governanceLane := lanes.governanceLane
+	exchangeLane := lanes.exchangeLane
+	defaultLane := lanes.defaultLane
+
+	mempool, err := skipblock.NewLanedMempool(
+		app.Logger(),
+		[]skipblock.Lane{
+			oracleLane,
+			governanceLane,
+			exchangeLane,
+			defaultLane,
+		},
+	)
+	if err != nil {
+		panic("error while initializing mempool: " + err.Error())
+	}
+	app.BaseApp.SetMempool(mempool)
 
 	app.configurator = module.NewConfigurator(app.codec, app.MsgServiceRouter(), app.GRPCQueryRouter())
 	if err := app.mm.RegisterServices(app.configurator); err != nil {
@@ -402,20 +442,63 @@ func NewInjectiveApp(
 	// use Injective's custom AnteHandler
 	skipAnteHandlers := cast.ToBool(appOpts.Get("SkipAnteHandlers"))
 	if !skipAnteHandlers {
-		app.SetAnteHandler(ante.NewAnteHandler(ante.HandlerOptions{
+		anteHandler := ante.NewAnteHandler(ante.HandlerOptions{
 			HandlerOptions: authante.HandlerOptions{
-				AccountKeeper:   app.AccountKeeper,
-				BankKeeper:      app.BankKeeper,
-				SignModeHandler: app.txConfig.SignModeHandler(),
-				FeegrantKeeper:  app.FeeGrantKeeper,
-				SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
+				AccountKeeper:          app.AccountKeeper,
+				BankKeeper:             app.BankKeeper,
+				ExtensionOptionChecker: nil,
+				FeegrantKeeper:         app.FeeGrantKeeper,
+				SignModeHandler:        app.txConfig.SignModeHandler(),
+				SigGasConsumer:         ante.DefaultSigVerificationGasConsumer,
 			},
 			IBCKeeper:             app.IBCKeeper,
 			WasmConfig:            &wasmConfig,
 			WasmKeeper:            &app.WasmKeeper,
 			TXCounterStoreService: runtime.NewKVStoreService(app.keys[wasmtypes.StoreKey]),
-		}))
+			TxFeesKeeper:          &app.TxFeesKeeper,
+		})
+		app.SetAnteHandler(anteHandler)
+		// Set the ante handler on the lanes.
+		opt := []skipbase.LaneOption{
+			skipbase.WithAnteHandler(app.AnteHandler()),
+		}
+		oracleLane.WithOptions(
+			opt...,
+		)
+		governanceLane.WithOptions(
+			opt...,
+		)
+		exchangeLane.WithOptions(
+			opt...,
+		)
+		defaultLane.WithOptions(
+			opt...,
+		)
 	}
+
+	proposalHandler := skipabci.NewDefaultProposalHandler(
+		app.Logger(),
+		app.TxConfig().TxDecoder(),
+		app.TxConfig().TxEncoder(),
+		mempool,
+	)
+	app.SetPrepareProposal(proposalHandler.PrepareProposalHandler())
+	app.SetProcessProposal(proposalHandler.ProcessProposalHandler())
+
+	cacheDecoder, err := skiputils.NewDefaultCacheTxDecoder(app.txConfig.TxDecoder())
+	if err != nil {
+		panic(err)
+	}
+
+	checkTxHandler := skipchecktx.NewMempoolParityCheckTx(
+		app.Logger(),
+		mempool,
+		cacheDecoder.TxDecoder(),
+		app.BaseApp.CheckTx, // wrap the default checkTx handler
+		app.BaseApp,
+	)
+
+	app.SetCheckTx(checkTxHandler.CheckTx())
 
 	if loadLatest {
 		if err := app.LoadLatestVersion(); err != nil {
@@ -468,6 +551,7 @@ func initInjectiveApp(
 			auctiontypes.StoreKey,
 			ocrtypes.StoreKey,
 			tokenfactorytypes.StoreKey,
+			txfeestypes.StoreKey,
 			permissionsmodule.StoreKey,
 			wasmtypes.StoreKey,
 			wasmxtypes.StoreKey,
@@ -554,6 +638,83 @@ func initInjectiveApp(
 	go app.PublishBlocksAndTxs()
 
 	return app
+}
+
+type HasValidateBasic interface {
+	// ValidateBasic does a simple validation check that
+	// doesn't require access to any other information.
+	ValidateBasic() error
+}
+
+type initLanesResult struct {
+	oracleLane     *skipbase.BaseLane
+	governanceLane *skipbase.BaseLane
+	exchangeLane   *skipbase.BaseLane
+	defaultLane    *skipbase.BaseLane
+}
+
+func (app *InjectiveApp) initLanes() (lanes initLanesResult) {
+	oracleLane := oraclelane.NewOracleLane(
+		skipbase.LaneConfig{
+			Logger:          app.Logger(),
+			TxEncoder:       app.txConfig.TxEncoder(),
+			TxDecoder:       app.txConfig.TxDecoder(),
+			SignerExtractor: signerextraction.NewDefaultAdapter(),
+			MaxBlockSpace:   math.LegacyMustNewDecFromStr("0.05"),
+			MaxTxs:          10,
+		},
+	)
+	governanceLane := governancelane.NewGovernanceLane(
+		app.ExchangeKeeper,
+		skipbase.LaneConfig{
+			Logger:          app.Logger(),
+			TxEncoder:       app.txConfig.TxEncoder(),
+			TxDecoder:       app.txConfig.TxDecoder(),
+			SignerExtractor: signerextraction.NewDefaultAdapter(),
+			MaxBlockSpace:   math.LegacyMustNewDecFromStr("0.10"),
+			MaxTxs:          10,
+		},
+	)
+	exchangeLane := exchangelane.NewExchangeLane(
+		app.ExchangeKeeper,
+		skipbase.LaneConfig{
+			Logger:          app.Logger(),
+			TxEncoder:       app.txConfig.TxEncoder(),
+			TxDecoder:       app.txConfig.TxDecoder(),
+			SignerExtractor: signerextraction.NewDefaultAdapter(),
+			MaxBlockSpace:   math.LegacyMustNewDecFromStr("0.85"),
+			MaxTxs:          0,
+		},
+	)
+	defaultLane := skipdefaultlane.NewDefaultLane(
+		skipbase.LaneConfig{
+			Logger:          app.Logger(),
+			TxEncoder:       app.txConfig.TxEncoder(),
+			TxDecoder:       app.txConfig.TxDecoder(),
+			SignerExtractor: signerextraction.NewDefaultAdapter(),
+			MaxBlockSpace:   math.LegacyZeroDec(),
+			MaxTxs:          0,
+		},
+		skipbase.DefaultMatchHandler(),
+	)
+
+	return initLanesResult{
+		defaultLane:    defaultLane,
+		exchangeLane:   exchangeLane,
+		governanceLane: governanceLane,
+		oracleLane:     oracleLane,
+	}
+}
+
+// CheckTx calls a custom checkTx wrapper to ensure mempool parity between app and cometbft.
+// This overrides  BaseApp default checkTx handler.
+func (app *InjectiveApp) CheckTx(req *abci.RequestCheckTx) (*abci.ResponseCheckTx, error) {
+	return app.checkTxHandler(req)
+}
+
+// SetCheckTx sets the checkTxHandler for the app.
+func (app *InjectiveApp) SetCheckTx(handler skipchecktx.CheckTx) {
+	app.checkTxHandler = handler
 }
 
 func (app *InjectiveApp) GetBaseApp() *baseapp.BaseApp { return app.BaseApp }
@@ -761,6 +922,9 @@ func (app *InjectiveApp) RegisterTendermintService(clientCtx client.Context) {
 }
 
 func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOptions, wasmConfig wasmtypes.WasmConfig) oracle.AppModule {
+	homePath := cast.ToString(appOpts.Get(flags.FlagHome))
+	dataDir := filepath.Join(homePath, "data")
+
 	app.ParamsKeeper = initParamsKeeper(
 		app.codec,
 		app.amino,
@@ -777,7 +941,7 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		skipUpgradeHeights,
 		runtime.NewKVStoreService(app.keys[upgradetypes.StoreKey]),
 		app.codec,
-		cast.ToString(appOpts.Get(flags.FlagHome)),
+		homePath,
 		app.BaseApp,
 		authority,
 	)
@@ -961,6 +1125,14 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		&app.AccountKeeper,
 	)
 
+	app.TxFeesKeeper = txfeeskeeper.NewKeeper(
+		app.codec,
+		app.keys[txfeestypes.StoreKey],
+		app.ConsensusParamsKeeper,
+		dataDir,
+		authority,
+	)
+
 	app.WasmxKeeper = wasmxkeeper.NewKeeper(
 		app.codec,
 		app.keys[wasmxtypes.StoreKey],
@@ -975,7 +1147,7 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		app.keys[insurancetypes.StoreKey],
 		app.AccountKeeper,
 		app.BankKeeper,
-		&app.ExchangeKeeper,
+		app.ExchangeKeeper,
 		authority,
 	)
 
@@ -992,7 +1164,7 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		authority,
 	)
 
-	app.InsuranceKeeper.SetExchangeKeeper(&app.ExchangeKeeper)
+	app.InsuranceKeeper.SetExchangeKeeper(app.ExchangeKeeper)
 
 	app.PeggyKeeper = peggyKeeper.NewKeeper(
 		app.codec,
@@ -1001,7 +1173,7 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		app.BankKeeper,
 		app.SlashingKeeper,
 		app.DistrKeeper,
-		app.ExchangeKeeper,
+		*app.ExchangeKeeper,
 		authority,
 		app.AccountKeeper,
 	)
@@ -1082,7 +1254,7 @@ func (app *InjectiveApp) initKeepers(authority string, appOpts servertypes.AppOp
 		&app.AuthzKeeper,
 		app.BankKeeper.(bankkeeper.BaseKeeper),
 		&app.AuctionKeeper,
-		&app.ExchangeKeeper,
+		app.ExchangeKeeper,
 		&app.FeeGrantKeeper,
 		&app.OracleKeeper,
 		&app.TokenFactoryKeeper,
@@ -1247,16 +1419,18 @@ func (app *InjectiveApp) initManagers(oracleModule oracle.AppModule) {
 		packetforward.NewAppModule(app.PacketForwardKeeper, app.GetSubspace(packetforwardtypes.ModuleName)),
 		// Injective app modules
 		exchange.NewAppModule(app.ExchangeKeeper, app.AccountKeeper, app.BankKeeper, app.GetSubspace(exchangetypes.ModuleName)),
-		auction.NewAppModule(app.AuctionKeeper, app.AccountKeeper, app.BankKeeper, app.ExchangeKeeper, app.GetSubspace(auctiontypes.ModuleName)),
+		//nolint:revive // this is fine
+		auction.NewAppModule(app.AuctionKeeper, app.AccountKeeper, app.BankKeeper, *app.ExchangeKeeper, app.GetSubspace(auctiontypes.ModuleName)),
 		insurance.NewAppModule(app.InsuranceKeeper, app.AccountKeeper, app.BankKeeper, app.GetSubspace(insurancetypes.ModuleName)),
 		oracleModule,
 		peggy.NewAppModule(app.PeggyKeeper, app.BankKeeper, app.GetSubspace(peggytypes.ModuleName)),
 		ocr.NewAppModule(app.OcrKeeper, app.AccountKeeper, app.BankKeeper, app.GetSubspace(ocrtypes.ModuleName)),
+		txfees.NewAppModule(app.TxFeesKeeper),
 		tokenfactory.NewAppModule(app.TokenFactoryKeeper, app.AccountKeeper, app.BankKeeper, app.GetSubspace(tokenfactorytypes.ModuleName)),
 		permissionsmodule.NewAppModule(app.PermissionsKeeper, app.BankKeeper, app.TokenFactoryKeeper, app.WasmKeeper, app.GetSubspace(permissionsmodule.ModuleName)),
 		// this line is used by starport scaffolding # stargate/app/appModule
 		wasm.NewAppModule(app.codec, &app.WasmKeeper, app.StakingKeeper, app.AccountKeeper, app.BankKeeper, app.MsgServiceRouter(), app.GetSubspace(wasmtypes.ModuleName)),
-		wasmx.NewAppModule(app.WasmxKeeper, app.AccountKeeper, app.BankKeeper, app.ExchangeKeeper, app.GetSubspace(wasmxtypes.ModuleName)),
+		wasmx.NewAppModule(app.WasmxKeeper, app.AccountKeeper, app.BankKeeper, *app.ExchangeKeeper, app.GetSubspace(wasmxtypes.ModuleName)),
 	)
 
 	// BasicModuleManager defines the module BasicManager is in charge of setting up basic,
@@ -1323,6 +1497,7 @@ func initParamsKeeper(
 	// wasm subspace
 	paramsKeeper.Subspace(wasmtypes.ModuleName)
 	// injective subspaces
+	paramsKeeper.Subspace(txfeestypes.ModuleName)
 	paramsKeeper.Subspace(auctiontypes.ModuleName)
 	paramsKeeper.Subspace(insurancetypes.ModuleName)
 	paramsKeeper.Subspace(oracletypes.ModuleName)
@@ -1365,10 +1540,12 @@ func initGenesisOrder() []string {
 		feegrant.ModuleName,
 		consensustypes.ModuleName,
 		packetforwardtypes.ModuleName,
+
 		// Injective modules
 		auctiontypes.ModuleName,
 		oracletypes.ModuleName,
 		tokenfactorytypes.ModuleName,
+		txfees.ModuleName,
 		permissionsmodule.ModuleName,
 		insurancetypes.ModuleName,
 		exchangetypes.ModuleName,
@@ -1405,6 +1582,7 @@ func beginBlockerOrder() []string {
 		authz.ModuleName,
 		ibctransfertypes.ModuleName,
 		consensustypes.ModuleName,
+		txfeestypes.ModuleName, // should run after consensus in case block params change
 		capabilitytypes.ModuleName,
 		minttypes.ModuleName,
 		distrtypes.ModuleName,
@@ -1463,6 +1641,7 @@ func endBlockerOrder() []string {
 		ibchookstypes.ModuleName,
 		packetforwardtypes.ModuleName,
 		wasmxtypes.ModuleName,
+		txfeestypes.ModuleName,
 		banktypes.ModuleName,
 	}
 }

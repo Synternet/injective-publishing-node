@@ -25,7 +25,6 @@ type DeductFeeDecorator struct {
 }
 
 func NewDeductFeeDecorator(ak authante.AccountKeeper, bk types.BankKeeper) DeductFeeDecorator {
-
 	return DeductFeeDecorator{
 		ak:           ak,
 		bankKeeper:   bk,
