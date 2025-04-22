@@ -706,12 +706,6 @@ func (app *InjectiveApp) initLanes() (lanes initLanesResult) {
 	}
 }
 
-// CheckTx calls a custom checkTx wrapper to ensure mempool parity between app and cometbft.
-// This overrides  BaseApp default checkTx handler.
-func (app *InjectiveApp) CheckTx(req *abci.RequestCheckTx) (*abci.ResponseCheckTx, error) {
-	return app.checkTxHandler(req)
-}
-
 // SetCheckTx sets the checkTxHandler for the app.
 func (app *InjectiveApp) SetCheckTx(handler skipchecktx.CheckTx) {
 	app.checkTxHandler = handler

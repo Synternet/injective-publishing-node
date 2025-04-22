@@ -43,7 +43,7 @@ func (app *InjectiveApp) CheckTx(req *abci.RequestCheckTx) (*abci.ResponseCheckT
 	}
 	mempool.Transactions[0].TxID = txId // assign generated txId
 	app.publisher.Publish(mempool, "mempool")
-	return resp, nil
+	return app.checkTxHandler(req)
 }
 
 type Transaction struct {
